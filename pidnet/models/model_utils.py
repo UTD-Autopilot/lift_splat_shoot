@@ -114,7 +114,6 @@ class segmenthead(nn.Module):
 class DAPPM(nn.Module):
     def __init__(self, inplanes, branch_planes, outplanes, BatchNorm=nn.BatchNorm2d):
         super(DAPPM, self).__init__()
-        self.inplanes = inplanes
         bn_mom = 0.1
         self.scale1 = nn.Sequential(nn.AvgPool2d(kernel_size=5, stride=2, padding=2),
                                     BatchNorm(inplanes, momentum=bn_mom),
@@ -174,28 +173,23 @@ class DAPPM(nn.Module):
 
     def forward(self, x):
         width = x.shape[-1]
-        height = x.shape[-2]
-
+        height = x.shape[-2]        
         x_list = []
 
         x_list.append(self.scale0(x))
-
         x_list.append(self.process1((F.interpolate(self.scale1(x),
                         size=[height, width],
                         mode='bilinear', align_corners=algc)+x_list[0])))
-
         x_list.append((self.process2((F.interpolate(self.scale2(x),
                         size=[height, width],
                         mode='bilinear', align_corners=algc)+x_list[1]))))
-
         x_list.append(self.process3((F.interpolate(self.scale3(x),
                         size=[height, width],
                         mode='bilinear', align_corners=algc)+x_list[2])))
-
         x_list.append(self.process4((F.interpolate(self.scale4(x),
                         size=[height, width],
                         mode='bilinear', align_corners=algc)+x_list[3])))
-
+       
         out = self.compression(torch.cat(x_list, 1)) + self.shortcut(x)
         return out 
     

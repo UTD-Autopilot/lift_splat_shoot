@@ -132,7 +132,6 @@ class BaseDataset(data.Dataset):
 
         return image, label, edge
 
-
     def inference(self, config, model, image):
         size = image.size()
         pred = model(image)
@@ -140,12 +139,10 @@ class BaseDataset(data.Dataset):
         if config.MODEL.NUM_OUTPUTS > 1:
             pred = pred[config.TEST.OUTPUT_INDEX]
         
-        
         pred = F.interpolate(
             input=pred, size=size[-2:],
             mode='bilinear', align_corners=config.MODEL.ALIGN_CORNERS
         )
-        
         
         return pred.exp()
 

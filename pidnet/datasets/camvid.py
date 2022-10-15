@@ -104,6 +104,3 @@ class CamVid(BaseDataset):
             pred = self.label2color(preds[i])
             save_img = Image.fromarray(pred)
             save_img.save(os.path.join(sv_path, name[i]+'.png'))
-
-        
-        

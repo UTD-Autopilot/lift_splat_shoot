@@ -1,18 +1,50 @@
 import cv2
-import torch
-from time import time
-
-from efficientnet_pytorch import EfficientNet
-from matplotlib import pyplot as plt
-from tensorboardX import SummaryWriter
 import numpy as np
+import torch.nn as nn
+
+from tqdm import tqdm
+from PIL import Image
+from time import time
+from src.models import compile_model
+from tensorboardX import SummaryWriter
+from transforms3d.euler import euler2mat
+from efficientnet_pytorch import EfficientNet
+from src.tools import SimpleLoss, get_batch_iou, normalize_img, img_transform
+
 import os
 import json
 import math
-from transforms3d.euler import euler2mat
-from PIL import Image
-from .models import compile_model
-from .tools import SimpleLoss, get_batch_iou, normalize_img, img_transform
+import torch
+
+
+def save_pred(pred, binimg, multi, type):
+    if multi:
+        pred = torch.argmax(pred, dim=1).squeeze(0).cpu().numpy()[0]
+        pred = pred[:, :]
+        output = np.zeros(shape=(200, 200, 3))
+
+        output[pred == 0] = (0, 0, 0)
+        output[pred == 1] = (0, 0, 255)
+        output[pred == 2] = (255, 0, 0)
+        output[pred == 3] = (0, 255, 0)
+        output[pred == 4] = (255, 0, 255)
+
+        cv2.imwrite("pred_val_" + type + ".jpg", output)
+
+        binimg = torch.argmax(binimg, dim=1).squeeze(0).cpu().numpy()[0]
+        binimg = binimg[:, :]
+        output = np.zeros(shape=(200, 200, 3))
+
+        output[binimg == 0] = (0, 0, 0)
+        output[binimg == 1] = (0, 0, 255)
+        output[binimg == 2] = (255, 0, 0)
+        output[binimg == 3] = (0, 255, 0)
+        output[binimg == 4] = (255, 0, 255)
+
+        cv2.imwrite("binimgs_" + type + ".jpg", output)
+    else:
+        cv2.imwrite("pred_" + type + ".jpg", np.array(pred.sigmoid().detach().cpu())[0, 0] * 255)
+        cv2.imwrite("binimgs_" + type + ".jpg", np.array(binimg.detach().cpu())[0, 0] * 255)
 
 
 def get_camera_info(translation, rotation, sensor_options):
@@ -30,38 +62,74 @@ def get_camera_info(translation, rotation, sensor_options):
     return torch.tensor(rotation_matrix), torch.tensor(translation), torch.tensor(calibration)
 
 
-class CarlaDataset(torch.utils.data.Dataset):
-    def __init__(self, record_path, data_aug_conf, ticks):
-        self.record_path = record_path
-        self.data_aug_conf = data_aug_conf
-        self.ticks = ticks
+def mask(img, target):
+    m = np.all(img == target, axis=2).astype(int)
+    return m
 
-        with open(os.path.join(self.record_path, 'sensors.json'), 'r') as f:
+
+class CarlaDataset(torch.utils.data.Dataset):
+    def __init__(self, record_path, data_aug_conf, type="default", multi=False):
+        self.record_path = record_path
+        self.multi = multi
+        self.type = type
+        self.data_aug_conf = data_aug_conf
+        self.vehicles = len(os.listdir(os.path.join(self.record_path, 'agents')))
+        self.ticks = len(os.listdir(os.path.join(self.record_path, 'agents/0/back_camera')))
+
+        with open(os.path.join(self.record_path, 'agents/0/sensors.json'), 'r') as f:
             self.sensors_info = json.load(f)
 
     def __len__(self):
-        return self.ticks
+        return self.ticks * self.vehicles
 
     def __getitem__(self, idx):
+        agent_number = math.floor(idx / self.ticks)
+        agent_path = os.path.join(self.record_path, f"agents/{agent_number}/")
+        idx = idx % self.ticks
+
         imgs = []
         img_segs = []
+        depths = []
         rots = []
         trans = []
         intrins = []
         post_rots = []
         post_trans = []
 
-        binimgs = Image.open(os.path.join(self.record_path + "birds_view_semantic_camera", str(idx) + '.png'))
-        binimgs = binimgs.crop((25, 25, 175, 175))
-        binimgs = binimgs.resize((200, 200))
+        binimgs = Image.open(os.path.join(agent_path + "birds_view_semantic_camera", str(idx) + '.png'))
+
         binimgs = np.array(binimgs)
-        binimgs = torch.tensor(binimgs).permute(2, 1, 0)[0]
-        binimgs = binimgs[None, :, :]/255
+
+        if self.multi:
+            vehicles = mask(binimgs, (0, 0, 142))
+            road = mask(binimgs, (128, 64, 128))
+            road_line = mask(binimgs, (157, 234, 50))
+            sidewalk = mask(binimgs, (244, 35, 232))
+
+            empty = np.ones((200, 200))
+            is_empty = np.logical_or(vehicles == 1, road == 1)
+            is_empty = np.logical_or(is_empty, road_line == 1)
+            is_empty = np.logical_or(is_empty, sidewalk == 1)
+
+            empty[is_empty] = 0
+
+            binimgs = np.stack((empty, vehicles, road, road_line, sidewalk))
+        else:
+            binimgs = mask(binimgs, (0, 0, 142))
+            binimgs = binimgs[None, :, :]
+
+        binimgs = torch.tensor(binimgs)
 
         for sensor_name, sensor_info in self.sensors_info['sensors'].items():
             if sensor_info["sensor_type"] == "sensor.camera.rgb" and sensor_name != "birds_view_camera":
-                image = Image.open(os.path.join(self.record_path + sensor_name, str(idx) + '.png'))
-                image_seg = Image.open(os.path.join(self.record_path + sensor_name + "_semantic", str(idx) + '.png'))
+                image = Image.open(os.path.join(agent_path + sensor_name, str(idx) + '.png'))
+
+                if self.type == "pidnet":
+                    image_seg = Image.open(os.path.join(agent_path + sensor_name + "_pidnet", str(idx) + '.png'))
+                else:
+                    image_seg = Image.open(os.path.join(agent_path + sensor_name + "_semantic", str(idx) + '.png'))
+
+                depth = Image.open(os.path.join(agent_path + sensor_name + "_depth", str(idx) + '.png'))
 
                 tran = sensor_info["transform"]["location"]
                 rot = sensor_info["transform"]["rotation"]
@@ -80,6 +148,13 @@ class CarlaDataset(torch.utils.data.Dataset):
                                               flip=flip,
                                               rotate=rotate, )
 
+                depth, _, _ = img_transform(depth, post_rot, post_tran,
+                                            resize=resize,
+                                            resize_dims=resize_dims,
+                                            crop=crop,
+                                            flip=flip,
+                                            rotate=rotate, )
+
                 img, post_rot2, post_tran2 = img_transform(image, post_rot, post_tran,
                                                            resize=resize,
                                                            resize_dims=resize_dims,
@@ -93,20 +168,38 @@ class CarlaDataset(torch.utils.data.Dataset):
                 post_rot[:2, :2] = post_rot2
 
                 img_seg = np.array(img_seg)
-                img_seg = torch.tensor(img_seg).permute(2, 0, 1)[0]
-                img_seg = img_seg[None, :, :]
+
+                if self.type == "pidnet":
+                    img_seg = mask(img_seg, (255, 255, 255))
+                else:
+                    img_seg = mask(img_seg, (0, 0, 142))
+
+                img_seg = torch.tensor(img_seg)[None, :, :]
+
+                depth = np.array(depth)
+                depth = depth[:, :, 0] + depth[:, :, 1] * 256 + depth[:, :, 2] * 256 * 256
+                depth = depth / (256 * 256 * 256 - 1)
+                depth = depth * 1000
+
+                if np.max(depth) > 0:
+                    depth = depth / np.max(depth)
+
+                depth = torch.tensor(depth)[None, :, :]
 
                 imgs.append(normalize_img(img))
-                # img_segs.append(normalize_img(img_seg))
-                img_segs.append(img_seg/255)
+                img_segs.append(img_seg)
+                depths.append(depth)
+
                 intrins.append(intrin)
                 rots.append(rot)
                 trans.append(tran)
                 post_rots.append(post_rot)
                 post_trans.append(post_tran)
 
-        return (torch.stack(imgs).float(), torch.stack(img_segs).float(), torch.stack(rots).float(), torch.stack(trans).float(),
-                torch.stack(intrins).float(), torch.stack(post_rots).float(), torch.stack(post_trans).float(), binimgs.float())
+        return (torch.stack(imgs).float(), torch.stack(img_segs).float(), torch.stack(depths).float(),
+                torch.stack(rots).float(), torch.stack(trans).float(),
+                torch.stack(intrins).float(), torch.stack(post_rots).float(), torch.stack(post_trans).float(),
+                binimgs.float())
 
     def sample_augmentation(self):
         H, W = self.data_aug_conf['H'], self.data_aug_conf['W']
@@ -134,10 +227,14 @@ def get_val(model, val_loader, device, loss_fn, type):
     print('running eval...')
 
     with torch.no_grad():
-        for (imgs, img_segs, rots, trans, intrins, post_rots, post_trans, binimgs) in val_loader:
+        for (imgs, img_segs, depths, rots, trans, intrins, post_rots, post_trans, binimgs) in tqdm(val_loader):
 
-            if type == "seg":
+            if type == "seg" or type == "pidnet":
                 imgs = torch.cat((imgs, img_segs), 2)
+            if type == "depth":
+                imgs = torch.cat((imgs, depths), 2)
+            if type == "seg_depth" or type == "pidnet_depth":
+                imgs = torch.cat((imgs, img_segs, depths), 2)
 
             preds = model(imgs.to(device), rots.to(device),
                           trans.to(device), intrins.to(device), post_rots.to(device),
@@ -152,21 +249,18 @@ def get_val(model, val_loader, device, loss_fn, type):
             total_intersect += intersect
             total_union += union
 
-            cv2.imwrite("pred_val_" + type + ".jpg", np.array(preds.sigmoid().detach().cpu())[0, 0] * 255)
-            cv2.imwrite("binimgs_val_" + type + ".jpg", np.array(binimgs.detach().cpu())[0, 0] * 255)
-
     model.train()
 
     return {
         'loss': total_loss / len(val_loader.dataset),
-        'iou': total_intersect / total_union,
+        'iou': total_intersect / total_union if (total_union > 0) else 1.0,
     }
 
 
 def train(
         dataroot='../data/carla',
         nepochs=10000,
-        gpuid=0,
+        gpus=(0,),
 
         H=128, W=352,
         resize_lim=(0.193, 0.225),
@@ -180,13 +274,14 @@ def train(
         pos_weight=2.13,
         logdir='./runs',
         type='default',
-        xbound=[-50.0, 50.0, 0.5],
-        ybound=[-50.0, 50.0, 0.5],
-        zbound=[-10.0, 10.0, 20.0],
-        dbound=[4.0, 45.0, 1.0],
+        multi=False,
+        xbound=(-50.0, 50.0, 0.5),
+        ybound=(-50.0, 50.0, 0.5),
+        zbound=(-10.0, 10.0, 20.0),
+        dbound=(4.0, 45.0, 1.0),
 
-        bsz=8,
-        val_step=2000,
+        bsz=16,
+        val_step=1000,
         nworkers=10,
         lr=1e-3,
         weight_decay=1e-7,
@@ -210,33 +305,42 @@ def train(
         'Ncams': ncams,
     }
 
-    # 14980 1404
-    train_ticks = 14980
-    val_ticks = 1404
-
-    train_dataset = CarlaDataset(os.path.join(dataroot, "train/"), data_aug_conf, train_ticks)
-    val_dataset = CarlaDataset(os.path.join(dataroot, "val/"), data_aug_conf, val_ticks)
+    train_dataset = CarlaDataset(os.path.join(dataroot, "train/"), data_aug_conf, type=type, multi=multi)
+    val_dataset = CarlaDataset(os.path.join(dataroot, "val/"), data_aug_conf, type=type, multi=multi)
 
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=bsz, shuffle=True,
                                                num_workers=nworkers, drop_last=True)
-    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=bsz,
-                                             shuffle=False, num_workers=nworkers)
+    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=bsz, shuffle=False, num_workers=nworkers)
 
-    device = torch.device('cpu') if gpuid < 0 else torch.device(f'cuda:{gpuid}')
+    device = torch.device('cpu') if len(gpus) < 0 else torch.device(f'cuda:{gpus[0]}')
 
-    model = compile_model(grid_conf, data_aug_conf, outC=1)
+    if multi:
+        model = compile_model(grid_conf, data_aug_conf, outC=5)
+    else:
+        model = compile_model(grid_conf, data_aug_conf, outC=1)
 
-    if type == "seg":
-        model.camencode.trunk = EfficientNet.from_pretrained("efficientnet-b0", in_channels=6)
+    if type == "default":
+        pass
+    elif type == "seg" or type == "pidnet":
+        model.camencode.trunk = EfficientNet.from_pretrained("efficientnet-b0", in_channels=4)
+    elif type == "depth":
+        model.camencode.trunk = EfficientNet.from_pretrained("efficientnet-b0", in_channels=4)
+    elif type == "seg_depth" or type == "pidnet_depth":
+        model.camencode.trunk = EfficientNet.from_pretrained("efficientnet-b0", in_channels=5)
+    else:
+        raise Exception("This is not a valid model type")
+
+    model = nn.DataParallel(model, device_ids=gpus)
 
     model.to(device)
 
     opt = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
-    loss_fn = SimpleLoss(pos_weight).cuda(gpuid)
+    loss_fn = SimpleLoss(pos_weight).cuda(device)
     writer = SummaryWriter(logdir=logdir)
 
     print("--------------------------------------------------")
     print(f"Starting training on {type} model")
+    print(f"Using GPUS: {gpus}")
     print(f"Batch size: {bsz} ")
     print(f"Validation interval: {val_step} ")
     print("Training using CARLA ")
@@ -246,14 +350,21 @@ def train(
 
     model.train()
     counter = 0
+
     for epoch in range(nepochs):
         np.random.seed()
-        for batchi, (imgs, img_segs, rots, trans, intrins, post_rots, post_trans, binimgs) in enumerate(train_loader):
+
+        for batchi, (imgs, img_segs, depths, rots, trans, intrins, post_rots, post_trans, binimgs) in enumerate(
+                train_loader):
             t0 = time()
             opt.zero_grad()
 
-            if type == "seg":
+            if type == "seg" or type == "pidnet":
                 imgs = torch.cat((imgs, img_segs), 2)
+            if type == "depth":
+                imgs = torch.cat((imgs, depths), 2)
+            if type == "seg_depth" or type == "pidnet_depth":
+                imgs = torch.cat((imgs, img_segs, depths), 2)
 
             preds = model(imgs.to(device),
                           rots.to(device),
@@ -264,15 +375,13 @@ def train(
                           )
 
             binimgs = binimgs.to(device)
+
             loss = loss_fn(preds, binimgs)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
             opt.step()
             counter += 1
             t1 = time()
-
-            cv2.imwrite("pred_" + type + ".jpg", np.array(preds.sigmoid().detach().cpu())[0, 0] * 255)
-            cv2.imwrite("binimgs_" + type + ".jpg", np.array(binimgs.detach().cpu())[0, 0] * 255)
 
             if counter % 10 == 0:
                 print(counter, loss.item())
@@ -297,3 +406,5 @@ def train(
                 print('saving', mname)
                 torch.save(model.state_dict(), mname)
                 model.train()
+
+            save_pred(preds, binimgs, multi, type)

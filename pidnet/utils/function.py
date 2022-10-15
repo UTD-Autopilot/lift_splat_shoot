@@ -17,7 +17,6 @@ from utils.utils import get_confusion_matrix
 from utils.utils import adjust_learning_rate
 
 
-
 def train(config, epoch, num_epoch, epoch_iters, base_lr,
           num_iters, trainloader, optimizer, model, writer_dict):
     # Training
@@ -25,24 +24,22 @@ def train(config, epoch, num_epoch, epoch_iters, base_lr,
 
     batch_time = AverageMeter()
     ave_loss = AverageMeter()
-    ave_acc  = AverageMeter()
+    ave_acc = AverageMeter()
     avg_sem_loss = AverageMeter()
     avg_bce_loss = AverageMeter()
     tic = time.time()
     cur_iters = epoch*epoch_iters
     writer = writer_dict['writer']
-    global_steps = writer_dict['train_global_steps']
 
     for i_iter, batch in enumerate(trainloader, 0):
         images, labels, bd_gts, _, _ = batch
         images = images.cuda()
         labels = labels.long().cuda()
         bd_gts = bd_gts.float().cuda()
-        
 
         losses, _, acc, loss_list = model(images, labels, bd_gts)
         loss = losses.mean()
-        acc  = acc.mean()
+        acc = acc.mean()
 
         model.zero_grad()
         loss.backward()
@@ -64,6 +61,11 @@ def train(config, epoch, num_epoch, epoch_iters, base_lr,
                                   i_iter+cur_iters)
 
         if i_iter % config.PRINT_FREQ == 0:
+            global_steps = writer_dict['train_global_steps']
+            writer.add_scalar('train_loss', loss, global_steps)
+            writer.add_scalar('accuracy', acc, global_steps)
+            writer_dict['train_global_steps'] = global_steps + config.PRINT_FREQ
+
             msg = 'Epoch: [{}/{}] Iter:[{}/{}], Time: {:.2f}, ' \
                   'lr: {}, Loss: {:.6f}, Acc:{:.6f}, Semantic loss: {:.6f}, BCE loss: {:.6f}, SB loss: {:.6f}' .format(
                       epoch, num_epoch, i_iter, epoch_iters,
@@ -71,8 +73,6 @@ def train(config, epoch, num_epoch, epoch_iters, base_lr,
                       ave_acc.average(), avg_sem_loss.average(), avg_bce_loss.average(),ave_loss.average()-avg_sem_loss.average()-avg_bce_loss.average())
             logging.info(msg)
 
-    writer.add_scalar('train_loss', ave_loss.average(), global_steps)
-    writer_dict['train_global_steps'] = global_steps + 1
 
 def validate(config, testloader, model, writer_dict):
     model.eval()
@@ -129,11 +129,12 @@ def validate(config, testloader, model, writer_dict):
 
 
 def testval(config, test_dataset, testloader, model,
-            sv_dir='./', sv_pred=False):
+            sv_dir='./', sv_pred=True):
     model.eval()
     confusion_matrix = np.zeros((config.DATASET.NUM_CLASSES, config.DATASET.NUM_CLASSES))
     with torch.no_grad():
         for index, batch in enumerate(tqdm(testloader)):
+
             image, label, _, _, name = batch
             size = label.size()
             pred = test_dataset.single_scale_inference(config, model, image.cuda())

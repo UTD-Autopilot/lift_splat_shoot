@@ -72,9 +72,9 @@ def main():
     cudnn.deterministic = config.CUDNN.DETERMINISTIC
     cudnn.enabled = config.CUDNN.ENABLED
     gpus = list(config.GPUS)
-    if torch.cuda.device_count() != len(gpus):
-        print("The gpu numbers do not match!")
-        return 0
+    # if torch.cuda.device_count() != len(gpus):
+    #     print("The gpu numbers do not match!")
+    #     return 0
     
     imgnet = 'imagenet' in config.MODEL.PRETRAINED
     model = models.pidnet.get_seg_model(config, imgnet_pretrained=imgnet)
@@ -133,7 +133,7 @@ def main():
     bd_criterion = BondaryLoss()
     
     model = FullModel(model, sem_criterion, bd_criterion)
-    model = nn.DataParallel(model, device_ids=gpus).cuda()
+    model = nn.DataParallel(model, device_ids=gpus).cuda(1)
 
     # optimizer
     if config.TRAIN.OPTIMIZER == 'sgd':
@@ -157,7 +157,7 @@ def main():
     if config.TRAIN.RESUME:
         model_state_file = os.path.join(final_output_dir, 'checkpoint.pth.tar')
         if os.path.isfile(model_state_file):
-            checkpoint = torch.load(model_state_file, map_location={'cuda:0': 'cpu'})
+            checkpoint = torch.load(model_state_file, map_location={'cuda:1': 'cpu'})
             best_mIoU = checkpoint['best_mIoU']
             last_epoch = checkpoint['epoch']
             dct = checkpoint['state_dict']

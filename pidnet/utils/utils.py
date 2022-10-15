@@ -50,7 +50,7 @@ class FullModel(nn.Module):
     loss_b = self.bd_loss(outputs[-1], bd_gt)
 
     filler = torch.ones_like(labels) * config.TRAIN.IGNORE_LABEL
-    bd_label = torch.where(F.sigmoid(outputs[-1][:,0,:,:])>0.8, labels, filler)
+    bd_label = torch.where(torch.sigmoid(outputs[-1][:,0,:,:])>0.8, labels, filler)
     loss_sb = self.sem_loss(outputs[-2], bd_label)
     loss = loss_s + loss_b + loss_sb
 

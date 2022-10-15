@@ -8,18 +8,14 @@ import time
 from .model_utils import BasicBlock, Bottleneck, segmenthead, DAPPM, PAPPM, PagFM, Bag, Light_Bag
 import logging
 
-import math
-
 BatchNorm2d = nn.BatchNorm2d
 bn_mom = 0.1
 algc = False
 
-def col_round(x):
-  frac = x - math.floor(x)
-  if frac < 0.5: return math.floor(x)
-  return math.ceil(x)
+
 
 class PIDNet(nn.Module):
+
     def __init__(self, m=2, n=3, num_classes=19, planes=64, ppm_planes=96, head_planes=128, augment=True):
         super(PIDNet, self).__init__()
         self.augment = augment
@@ -138,37 +134,34 @@ class PIDNet(nn.Module):
         return layer
 
     def forward(self, x):
-        width_output = col_round(x.shape[-1] / 8)
-        height_output = col_round(x.shape[-2] / 8)
+
+        width_output = x.shape[-1] // 8
+        height_output = x.shape[-2] // 8
 
         x = self.conv1(x)
         x = self.layer1(x)
         x = self.relu(self.layer2(self.relu(x)))
         x_ = self.layer3_(x)
         x_d = self.layer3_d(x)
-
+        
         x = self.relu(self.layer3(x))
         x_ = self.pag3(x_, self.compression3(x))
-
         x_d = x_d + F.interpolate(
                         self.diff3(x),
                         size=[height_output, width_output],
                         mode='bilinear', align_corners=algc)
-
         if self.augment:
             temp_p = x_
         
         x = self.relu(self.layer4(x))
         x_ = self.layer4_(self.relu(x_))
         x_d = self.layer4_d(self.relu(x_d))
-
+        
         x_ = self.pag4(x_, self.compression4(x))
-
         x_d = x_d + F.interpolate(
                         self.diff4(x),
                         size=[height_output, width_output],
                         mode='bilinear', align_corners=algc)
-
         if self.augment:
             temp_d = x_d
             

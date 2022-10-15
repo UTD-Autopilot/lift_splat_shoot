@@ -145,7 +145,6 @@ def img_transform(img, post_rot, post_tran,
 
 
 class NormalizeInverse(torchvision.transforms.Normalize):
-    #  https://discuss.pytorch.org/t/simple-way-to-inverse-transform-normalization/4821/8
     def __init__(self, mean, std):
         mean = torch.as_tensor(mean)
         std = torch.as_tensor(std)
@@ -218,11 +217,27 @@ class QuickCumsum(torch.autograd.Function):
 
         return val, None, None
 
+class MultiLoss(torch.nn.Module):
+    def __init__(self, *args):
+        super(SimpleLoss, self).__init__()
+
+        if len(args) == 1:
+            self.loss_fn = torch.nn.CrossEntropyLoss(weight=torch.Tensor(args[0]))
+        else:
+            self.loss_fn = torch.nn.CrossEntropyLoss()
+
+    def forward(self, ypred, ytgt):
+        loss = self.loss_fn(ypred, ytgt)
+        return loss
 
 class SimpleLoss(torch.nn.Module):
-    def __init__(self, pos_weight):
+    def __init__(self, *args):
         super(SimpleLoss, self).__init__()
-        self.loss_fn = torch.nn.BCEWithLogitsLoss(pos_weight=torch.Tensor([pos_weight]))
+
+        if len(args) == 1:
+            self.loss_fn = torch.nn.BCEWithLogitsLoss(pos_weight=torch.Tensor([args[0]]))
+        else:
+            self.loss_fn = torch.nn.BCEWithLogitsLoss()
 
     def forward(self, ypred, ytgt):
         loss = self.loss_fn(ypred, ytgt)

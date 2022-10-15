@@ -70,6 +70,10 @@ class OhemCrossEntropy(nn.Module):
         tmp_target[tmp_target == self.ignore_label] = 0
         pred = pred.gather(1, tmp_target.unsqueeze(1))
         pred, ind = pred.contiguous().view(-1,)[mask].contiguous().sort()
+
+        if len(pred) == 0:
+            return torch.zeros(1, device=pred.device, dtype=pred.dtype)
+
         min_value = pred[min(self.min_kept, pred.numel() - 1)]
         threshold = max(min_value, self.thresh)
 

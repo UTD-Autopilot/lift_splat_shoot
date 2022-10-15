@@ -18,25 +18,33 @@ import torch.nn.functional as F
 from .tools import gen_dx_bx, cumsum_trick, QuickCumsum, denormalize_img
 import cv2
 
-color_map = [(128, 64,128),
-             (244, 35,232),
-             ( 70, 70, 70),
-             (102,102,156),
-             (190,153,153),
-             (153,153,153),
-             (250,170, 30),
-             (220,220,  0),
-             (107,142, 35),
-             (152,251,152),
-             ( 70,130,180),
-             (220, 20, 60),
-             (255,  0,  0),
-             (  0,  0,142),
-             (  0,  0, 70),
-             (  0, 60,100),
-             (  0, 80,100),
-             (  0,  0,230),
-             (119, 11, 32)]
+# color_map = [(128, 64,128),
+#              (244, 35,232),
+#              ( 70, 70, 70),
+#              (102,102,156),
+#              (190,153,153),
+#              (153,153,153),
+#              (250,170, 30),
+#              (220,220,  0),
+#              (107,142, 35),
+#              (152,251,152),
+#              ( 70,130,180),
+#              (220, 20, 60),
+#              (255,  0,  0),
+#              (  0,  0,142),
+#              (  0,  0, 70),
+#              (  0, 60,100),
+#              (  0, 80,100),
+#              (  0,  0,230),
+#              (119, 11, 32)]
+
+color_map = [(0, 0, 0),
+             (255, 0,0),
+             (0, 0, 255),
+             (0, 255, 0),
+             ]
+
+
 
 class Up(nn.Module):
     def __init__(self, in_channels, out_channels, scale_factor=2):
@@ -60,59 +68,66 @@ class Up(nn.Module):
         return self.conv(x1)
 
 
-
 class CamEncodeSeg(nn.Module):
     def __init__(self, D, C, downsample):
         super(CamEncodeSeg, self).__init__()
         self.D = D
         self.C = C
 
-        self.trunk = EfficientNet.from_pretrained("efficientnet-b0", in_channels=22)
+        self.trunk = EfficientNet.from_pretrained("efficientnet-b0", in_channels=4)
 
         self.up1 = Up(320+112, 512)
         self.depthnet = nn.Conv2d(512, self.D + self.C, kernel_size=1, padding=0)
 
-        self.segmentor = models.pidnet.get_pred_model('pidnet-l', 19)
+        self.segmentor = models.pidnet.get_pred_model('pidnet-l', 4)
         self.segmentor = load_pretrained(self.segmentor,
-                                         './pidnet/pretrained_models/cityscapes/PIDNet_L_Cityscapes_test.pt')
+                                         './pidnet/output/carla/pidnet_large_carla/best.pt')
 
-        self.segmentor.eval()
+        self.segmentor.requires_grad_(False)
 
     def get_depth_dist(self, x, eps=1e-20):
         return x.softmax(dim=1)
 
     def get_depth_feat(self, x):
 
-        seg_x = torch.zeros(size=(x.shape[0], 19, x.shape[2], x.shape[3]))
+        seg_x = torch.zeros(size=(x.shape[0], 1, x.shape[2], x.shape[3]))
         device = x.get_device()
 
         self.segmentor.eval()
+        self.segmentor.requires_grad_(False)
 
         with torch.no_grad():
             for i, img in enumerate(x):
-                if i == 1:
-                    img = np.array(denormalize_img(x[0].detach().cpu()))
-                    # sv_img = np.zeros_like(img).astype(np.uint8)
-                    # samp_img = np.copy(img);
-                    img = input_transform(img)
-                    img = img.transpose((2, 0, 1))
-                    img = torch.from_numpy(img).unsqueeze(0).to(device)
-                    pred = self.segmentor(img)
-                    pred = F.interpolate(pred, size=img.size()[-2:],
-                                         mode='bilinear', align_corners=True)
-                    seg_x[i] = pred
-                    # pred = torch.argmax(pred, dim=1).squeeze(0).cpu().numpy()
-                    #
-                    # for j, color in enumerate(color_map):
-                    #     for k in range(3):
-                    #         sv_img[:, :, k][pred == j] = color_map[j][k]
-                    # sv_img = Image.fromarray(sv_img)
-                    # samp_img = Image.fromarray(samp_img)
-                    # samp_img.save("./"+f"img_samp{i}.jpg")
-                    #
-                    # if not os.path.exists("./"):
-                    #     os.mkdir("./")
-                    # sv_img.save("./" + f"img_pred{i}.jpg")
+                img = np.array(denormalize_img(img.detach().cpu()))
+
+                # sv_img = np.zeros_like(img).astype(np.uint8)
+                # samp_img = np.copy(img)
+
+                img = input_transform(img)
+                img = img.transpose((2, 0, 1))
+                img = torch.from_numpy(img).unsqueeze(0).to(device)
+
+                pred = self.segmentor(img)
+                pred = F.interpolate(pred, size=img.size()[-2:],
+                                     mode='bilinear', align_corners=True)
+
+                pred = pred.softmax(dim=1)
+                seg_x[i] = pred[:, 1]
+
+            # pred = torch.argmax(pred, dim=1).squeeze(0).cpu().numpy()
+
+            # cv2.imwrite("cars_only.jpg", np.array(seg_x[i][0].detach().cpu())*255)
+            #
+            # for j, color in enumerate(color_map):
+            #     for k in range(3):
+            #         sv_img[:, :, k][pred == j] = color_map[j][k]
+            # sv_img = Image.fromarray(sv_img)
+            # samp_img = Image.fromarray(samp_img)
+            # samp_img.save("./"+f"img_samp{i}.jpg")
+            #
+            # if not os.path.exists("./"):
+            #     os.mkdir("./")
+            # sv_img.save("./" + f"img_pred{i}.jpg")
 
         x = torch.cat((x, seg_x.to(device)), 1)
 
@@ -154,6 +169,7 @@ class CamEncodeSeg(nn.Module):
 
         return x
 
+
 class CamEncode(nn.Module):
     def __init__(self, D, C, downsample):
         super(CamEncode, self).__init__()
@@ -169,14 +185,13 @@ class CamEncode(nn.Module):
         return x.softmax(dim=1)
 
     def get_depth_feat(self, x):
+        # features
         x = self.get_eff_depth(x)
 
         # Depth
         x = self.depthnet(x)
-
         depth = self.get_depth_dist(x[:, :self.D])
         new_x = depth.unsqueeze(1) * x[:, self.D:(self.D + self.C)].unsqueeze(2)
-
         return depth, new_x
 
     def get_eff_depth(self, x):
@@ -320,6 +335,7 @@ class LiftSplatShoot(nn.Module):
 
         x = x.view(B*N, C, imH, imW)
         x = self.camencode(x)
+
         x = x.view(B, N, self.camC, self.D, imH//self.downsample, imW//self.downsample)
         x = x.permute(0, 1, 3, 4, 5, 2)
 
@@ -378,6 +394,7 @@ class LiftSplatShoot(nn.Module):
         return x
 
     def forward(self, x, rots, trans, intrins, post_rots, post_trans):
+
         x = self.get_voxels(x, rots, trans, intrins, post_rots, post_trans)
         x = self.bevencode(x)
         return x

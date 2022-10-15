@@ -1,4 +1,50 @@
 # PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
+# PIDNet: A Real-time Semantic Segmentation Network Inspired from PID Controller
 	
 [![PWC](https://img.shields.io/endpoint.svg?url=https://paperswithcode.com/badge/pidnet-a-real-time-semantic-segmentation/real-time-semantic-segmentation-on-camvid)](https://paperswithcode.com/sota/real-time-semantic-segmentation-on-camvid?p=pidnet-a-real-time-semantic-segmentation) [![PWC](https://img.shields.io/endpoint.svg?url=https://paperswithcode.com/badge/pidnet-a-real-time-semantic-segmentation/real-time-semantic-segmentation-on-cityscapes)](https://paperswithcode.com/sota/real-time-semantic-segmentation-on-cityscapes?p=pidnet-a-real-time-semantic-segmentation)
 
@@ -95,6 +141,12 @@ python tools/train.py --cfg configs/cityscapes/pidnet_small_cityscapes.yaml GPUS
 * Or train the PIDNet-L on Cityscapes using train and val sets simultaneously with batch size of 12 on 4 GPUs:
 ````bash
 python tools/train.py --cfg configs/cityscapes/pidnet_large_cityscapes_trainval.yaml GPUS (0,1,2,3) TRAIN.BATCH_SIZE_PER_GPU 3
+````
+
+````bash
+python tools/train.py --cfg configs/carla/pidnet_small_carla.yaml GPUS [0] TRAIN.BATCH_SIZE_PER_GPU 8
+python tools/train.py --cfg configs/carla/pidnet_small_carla.yaml GPUS [0] TRAIN.BATCH_SIZE_PER_GPU 8 TRAIN.RESUME true
+python tools/eval.py --cfg configs/carla/pidnet_small_carla.yaml TEST.MODEL_FILE output/carla/pidnet_small_carla/checkpoint.pth.tar
 ````
 
 ### 2. Evaluation
