@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 import torch.nn as nn
+import torch.nn.functional as F
 
 from tqdm import tqdm
 from PIL import Image
@@ -10,6 +11,7 @@ from tensorboardX import SummaryWriter
 from transforms3d.euler import euler2mat
 from efficientnet_pytorch import EfficientNet
 from src.tools import SimpleLoss, get_batch_iou, normalize_img, img_transform
+from src.losses import *
 
 import os
 import json
@@ -275,6 +277,7 @@ def train(
         logdir='./runs',
         type='default',
         multi=False,
+        uncertainty=False,
         xbound=(-50.0, 50.0, 0.5),
         ybound=(-50.0, 50.0, 0.5),
         zbound=(-10.0, 10.0, 20.0),
@@ -331,6 +334,7 @@ def train(
         raise Exception("This is not a valid model type")
 
     model = nn.DataParallel(model, device_ids=gpus)
+    # model.load_state_dict(torch.load("./experiments/grid_search/1/model6000.pt"), strict=False)
 
     model.to(device)
 
@@ -350,6 +354,9 @@ def train(
 
     model.train()
     counter = 0
+    num_classes = 1
+
+    torch.autograd.set_detect_anomaly(True)
 
     for epoch in range(nepochs):
         np.random.seed()
@@ -376,8 +383,22 @@ def train(
 
             binimgs = binimgs.to(device)
 
-            loss = loss_fn(preds, binimgs)
+            if uncertainty:
+                loss = mse_loss(preds, binimgs, epoch, num_classes, 10, device)
+                # loss = loss_fn(preds, binimgs)
+
+                evidence = torch.relu(preds)
+                alpha = evidence + 1
+                u = num_classes / torch.sum(alpha, dim=1, keepdim=True)
+
+                loss = torch.mean(loss)
+                u = torch.mean(u)
+            else:
+                loss = loss_fn(preds, binimgs)
+
+
             loss.backward()
+
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
             opt.step()
             counter += 1
@@ -386,6 +407,7 @@ def train(
             if counter % 10 == 0:
                 print(counter, loss.item())
                 writer.add_scalar('train/loss', loss, counter)
+                writer.add_scalar('train/uncertainty', u, counter)
 
             if counter % 50 == 0:
                 _, _, iou = get_batch_iou(preds, binimgs)
@@ -408,3 +430,5 @@ def train(
                 model.train()
 
             save_pred(preds, binimgs, multi, type)
+
+
