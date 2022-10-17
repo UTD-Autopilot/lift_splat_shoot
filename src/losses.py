@@ -36,9 +36,9 @@ def loglikelihood_loss(y, alpha, device=None):
 
     alpha = alpha.to(device)
     S = torch.sum(alpha, dim=1, keepdim=True)
-    loglikelihood_err = torch.sum((y - (alpha / (S+1e-10))) ** 2, dim=1, keepdim=True)
+    loglikelihood_err = torch.sum((y - (alpha / (S))) ** 2, dim=1, keepdim=True)
     loglikelihood_var = torch.sum(
-        alpha * (S - alpha) / ((S * S * (S + 1))+1e-10), dim=1, keepdim=True
+        alpha * (S - alpha) / ((S * S * (S + 1))), dim=1, keepdim=True
     )
 
     loglikelihood = loglikelihood_err + loglikelihood_var
@@ -59,7 +59,7 @@ def mse_loss(y, alpha, epoch_num, num_classes, annealing_step, device=None):
     kl_alpha = (alpha - 1) * (1 - y) + 1
     kl_div = annealing_coef * kl_divergence(kl_alpha, num_classes, device=device)
     return loglikelihood + kl_div
-
+    return loglikelihood
 
 def edl_loss(func, y, alpha, epoch_num, num_classes, annealing_step, device=None):
     y = y.to(device)
@@ -79,7 +79,7 @@ def edl_loss(func, y, alpha, epoch_num, num_classes, annealing_step, device=None
 
 
 def edl_mse_loss(output, target, epoch_num, num_classes, annealing_step, device=None):
-    evidence = relu_evidence(output)
+    evidence = torch.sigmoid(output)
     alpha = evidence + 1
     loss = torch.mean(
         mse_loss(target, alpha, epoch_num, num_classes, annealing_step, device=device)

@@ -384,18 +384,19 @@ def train(
             binimgs = binimgs.to(device)
 
             if uncertainty:
-                loss = mse_loss(preds, binimgs, epoch, num_classes, 10, device)
+                # loss = edl_mse_loss(torch.ones(size=(16,1,200,200)).view(-1, 1), torch.ones(size=(16,1,200,200)).view(-1, 1), epoch, num_classes, 10, device)
+                # print(loss)
+                loss = edl_mse_loss(preds.view(-1, 1), binimgs.view(-1, 1), epoch, num_classes, 10, device)
                 # loss = loss_fn(preds, binimgs)
 
                 evidence = torch.relu(preds)
                 alpha = evidence + 1
                 u = num_classes / torch.sum(alpha, dim=1, keepdim=True)
 
-                loss = torch.mean(loss)
+                # loss = torch.mean(loss)
                 u = torch.mean(u)
             else:
                 loss = loss_fn(preds, binimgs)
-
 
             loss.backward()
 
