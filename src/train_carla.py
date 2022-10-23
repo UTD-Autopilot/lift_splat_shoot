@@ -2,10 +2,12 @@ import cv2
 import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn import CrossEntropyLoss
 
 from tqdm import tqdm
 from PIL import Image
 from time import time
+
 from src.models import compile_model
 from tensorboardX import SummaryWriter
 from transforms3d.euler import euler2mat
@@ -19,6 +21,22 @@ import math
 import torch
 
 
+def get_iou(preds, binimgs):
+    classes = preds.shape[1]
+
+    intersect = [0]*classes
+    union = [0]*classes
+
+    with torch.no_grad():
+        for i in range(classes):
+            pred = (preds[:, i, :, :] > 0)
+            tgt = binimgs[:, i, :, :].bool()
+            intersect[i] = (pred & tgt).sum().float().item()
+            union[i] = (pred | tgt).sum().float().item()
+
+    return intersect, union
+
+
 def save_pred(pred, binimg, multi, type):
     if multi:
         pred = torch.argmax(pred, dim=1).squeeze(0).cpu().numpy()[0]
@@ -26,22 +44,22 @@ def save_pred(pred, binimg, multi, type):
         output = np.zeros(shape=(200, 200, 3))
 
         output[pred == 0] = (0, 0, 0)
-        output[pred == 1] = (0, 0, 255)
-        output[pred == 2] = (255, 0, 0)
-        output[pred == 3] = (0, 255, 0)
-        output[pred == 4] = (255, 0, 255)
+        output[pred == 1] = (255, 255, 255)
+        # output[pred == 2] = (255, 0, 0)
+        # output[pred == 3] = (0, 255, 0)
+        # output[pred == 4] = (255, 0, 255)
 
-        cv2.imwrite("pred_val_" + type + ".jpg", output)
+        cv2.imwrite("pred_" + type + ".jpg", output)
 
         binimg = torch.argmax(binimg, dim=1).squeeze(0).cpu().numpy()[0]
         binimg = binimg[:, :]
         output = np.zeros(shape=(200, 200, 3))
 
         output[binimg == 0] = (0, 0, 0)
-        output[binimg == 1] = (0, 0, 255)
-        output[binimg == 2] = (255, 0, 0)
-        output[binimg == 3] = (0, 255, 0)
-        output[binimg == 4] = (255, 0, 255)
+        output[binimg == 1] = (255, 255, 255)
+        # output[binimg == 2] = (255, 0, 0)
+        # output[binimg == 3] = (0, 255, 0)
+        # output[binimg == 4] = (255, 0, 255)
 
         cv2.imwrite("binimgs_" + type + ".jpg", output)
     else:
@@ -78,6 +96,9 @@ class CarlaDataset(torch.utils.data.Dataset):
         self.vehicles = len(os.listdir(os.path.join(self.record_path, 'agents')))
         self.ticks = len(os.listdir(os.path.join(self.record_path, 'agents/0/back_camera')))
 
+        self.v = 0
+        self.e = 0
+
         with open(os.path.join(self.record_path, 'agents/0/sensors.json'), 'r') as f:
             self.sensors_info = json.load(f)
 
@@ -103,19 +124,26 @@ class CarlaDataset(torch.utils.data.Dataset):
         binimgs = np.array(binimgs)
 
         if self.multi:
+            # vehicles = mask(binimgs, (0, 0, 142))
+            # road = mask(binimgs, (128, 64, 128))
+            # road_line = mask(binimgs, (157, 234, 50))
+            # sidewalk = mask(binimgs, (244, 35, 232))
+            #
+            # empty = np.ones((200, 200))
+            # is_empty = np.logical_or(vehicles == 1, road == 1)
+            # is_empty = np.logical_or(is_empty, road_line == 1)
+            # is_empty = np.logical_or(is_empty, sidewalk == 1)
+            #
+            # empty[is_empty] = 0
+            #
+            # binimgs = np.stack((empty, vehicles, road, road_line, sidewalk))
+
             vehicles = mask(binimgs, (0, 0, 142))
-            road = mask(binimgs, (128, 64, 128))
-            road_line = mask(binimgs, (157, 234, 50))
-            sidewalk = mask(binimgs, (244, 35, 232))
-
             empty = np.ones((200, 200))
-            is_empty = np.logical_or(vehicles == 1, road == 1)
-            is_empty = np.logical_or(is_empty, road_line == 1)
-            is_empty = np.logical_or(is_empty, sidewalk == 1)
 
-            empty[is_empty] = 0
+            empty[vehicles == 1] = 0
 
-            binimgs = np.stack((empty, vehicles, road, road_line, sidewalk))
+            binimgs = np.stack((empty, vehicles))
         else:
             binimgs = mask(binimgs, (0, 0, 142))
             binimgs = binimgs[None, :, :]
@@ -223,8 +251,7 @@ def get_val(model, val_loader, device, loss_fn, type):
     model.eval()
 
     total_loss = 0.0
-    total_intersect = 0.0
-    total_union = 0
+    total_iou = 0.0
 
     print('running eval...')
 
@@ -247,15 +274,15 @@ def get_val(model, val_loader, device, loss_fn, type):
             total_loss += loss_fn(preds, binimgs).item() * preds.shape[0]
 
             # iou
-            intersect, union, _ = get_batch_iou(preds, binimgs)
-            total_intersect += intersect
-            total_union += union
+            intersection, union = get_iou(preds, binimgs)
+            iou = (intersection[0] / union[0] + intersection[1] / union[1]) / 2
+            total_iou += iou
 
     model.train()
 
     return {
         'loss': total_loss / len(val_loader.dataset),
-        'iou': total_intersect / total_union if (total_union > 0) else 1.0,
+        'iou': total_iou / len(val_loader.dataset),
     }
 
 
@@ -273,7 +300,7 @@ def train(
 
         ncams=5,
         max_grad_norm=5.0,
-        pos_weight=2.13,
+        weight=[2.13],
         logdir='./runs',
         type='default',
         multi=False,
@@ -286,7 +313,7 @@ def train(
         bsz=16,
         val_step=1000,
         nworkers=10,
-        lr=1e-3,
+        lr=1e-5,
         weight_decay=1e-7,
 ):
     grid_conf = {
@@ -317,8 +344,11 @@ def train(
 
     device = torch.device('cpu') if len(gpus) < 0 else torch.device(f'cuda:{gpus[0]}')
 
+    num_classes = 2
+
     if multi:
-        model = compile_model(grid_conf, data_aug_conf, outC=5)
+        model = compile_model(grid_conf, data_aug_conf, outC=2)
+        num_classes = 5
     else:
         model = compile_model(grid_conf, data_aug_conf, outC=1)
 
@@ -339,7 +369,14 @@ def train(
     model.to(device)
 
     opt = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
-    loss_fn = SimpleLoss(pos_weight).cuda(device)
+    if multi:
+        if len(weight) == 1:
+            weigt = [1, 5]
+        loss_fn = CrossEntropyLoss(weight=torch.tensor(weight).to(device))
+    else:
+        loss_fn = SimpleLoss(weight[0]).cuda(device)
+
+    mse = torch.nn.MSELoss()
     writer = SummaryWriter(logdir=logdir)
 
     print("--------------------------------------------------")
@@ -354,7 +391,6 @@ def train(
 
     model.train()
     counter = 0
-    num_classes = 1
 
     torch.autograd.set_detect_anomaly(True)
 
@@ -384,17 +420,12 @@ def train(
             binimgs = binimgs.to(device)
 
             if uncertainty:
-                # loss = edl_mse_loss(torch.ones(size=(16,1,200,200)).view(-1, 1), torch.ones(size=(16,1,200,200)).view(-1, 1), epoch, num_classes, 10, device)
-                # print(loss)
-                loss = edl_mse_loss(preds.view(-1, 1), binimgs.view(-1, 1), epoch, num_classes, 10, device)
-                # loss = loss_fn(preds, binimgs)
-
+                loss = edl_log_loss(preds.view(-1, num_classes), binimgs.view(-1, num_classes), epoch, num_classes, 10, device)
                 evidence = torch.relu(preds)
                 alpha = evidence + 1
                 u = num_classes / torch.sum(alpha, dim=1, keepdim=True)
-
-                # loss = torch.mean(loss)
                 u = torch.mean(u)
+
             else:
                 loss = loss_fn(preds, binimgs)
 
@@ -408,10 +439,13 @@ def train(
             if counter % 10 == 0:
                 print(counter, loss.item())
                 writer.add_scalar('train/loss', loss, counter)
-                writer.add_scalar('train/uncertainty', u, counter)
+                if uncertainty:
+                    writer.add_scalar('train/uncertainty', u, counter)
 
             if counter % 50 == 0:
-                _, _, iou = get_batch_iou(preds, binimgs)
+                intersection, union = get_iou(preds, binimgs)
+                iou = (intersection[0]/union[0] + intersection[1]/union[1]) / 2
+
                 print(counter, "iou:", iou)
                 writer.add_scalar('train/iou', iou, counter)
                 writer.add_scalar('train/epoch', epoch, counter)

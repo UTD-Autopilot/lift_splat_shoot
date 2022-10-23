@@ -6,27 +6,10 @@ from tqdm import tqdm
 from efficientnet_pytorch import EfficientNet
 
 from src.models import compile_model
-
-from src.train_carla import CarlaDataset, save_pred
+from src.train_carla import CarlaDataset, save_pred, get_iou
 
 import os
 import torch
-
-
-def get_iou(preds, binimgs):
-    classes = preds.shape[1]
-
-    intersect = [0]*classes
-    union = [0]*classes
-
-    with torch.no_grad():
-        for i in range(classes):
-            pred = (preds[:, i, :, :] > 0)
-            tgt = binimgs[:, i, :, :].bool()
-            intersect[i] = (pred & tgt).sum().float().item()
-            union[i] = (pred | tgt).sum().float().item()
-
-    return intersect, union
 
 
 def eval (
@@ -82,7 +65,7 @@ def eval (
     classes = 0
 
     if multi:
-        model = compile_model(grid_conf, data_aug_conf, outC=5)
+        model = compile_model(grid_conf, data_aug_conf, outC=2)
         classes = 5
     else:
         model = compile_model(grid_conf, data_aug_conf, outC=1)
