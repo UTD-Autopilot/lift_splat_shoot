@@ -217,6 +217,7 @@ class QuickCumsum(torch.autograd.Function):
 
         return val, None, None
 
+
 class MultiLoss(torch.nn.Module):
     def __init__(self, *args):
         super(SimpleLoss, self).__init__()
@@ -229,6 +230,7 @@ class MultiLoss(torch.nn.Module):
     def forward(self, ypred, ytgt):
         loss = self.loss_fn(ypred, ytgt)
         return loss
+
 
 class SimpleLoss(torch.nn.Module):
     def __init__(self, *args):

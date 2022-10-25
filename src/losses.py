@@ -1,5 +1,57 @@
 import torch
 import torch.nn.functional as F
+import numpy as np
+
+def dissonance(mean):
+    evidence = mean + 1.0
+    alpha = mean + 2.0
+    S = np.sum(alpha, axis=1, keepdims=True)
+    belief = evidence / S
+    dis_un = np.zeros_like(S)
+    for k in range(belief.shape[0]):
+        for i in range(belief.shape[1]):
+            bi = belief[k][i]
+            term_Bal = 0.0
+            term_bj = 0.0
+            for j in range(belief.shape[1]):
+                if j != i:
+                    bj = belief[k][j]
+                    term_Bal += bj * Bal(bi, bj)
+                    term_bj += bj
+            dis_ki = bi * term_Bal / (term_bj + 1e-7)
+            dis_un[k] += dis_ki
+
+    return dis_un
+
+def Bal(b_i, b_j):
+    result = 1 - np.abs(b_i - b_j) / (b_i + b_j + 1e-7)
+    return result
+
+def entropy_softmax(pred):
+    class_num = pred.shape[1]
+    prob = softmax(pred) + 1e-10
+    entropy = - prob * (np.log(prob) / np.log(class_num))
+
+    total_un = np.sum(entropy, axis=1, keepdims=True)
+    class_un = entropy
+    return total_un, class_un
+
+
+def softmax(pred):
+    ex = np.exp(pred - np.amax(pred, axis=1, keepdims=True))
+    prob = ex / np.sum(ex, axis=1, keepdims=True)
+    return prob
+
+
+def vacuity(mean):
+    # Vacuity uncertainty
+    class_num = mean.shape[1]
+    alpha = mean + 2.0
+    S = np.sum(alpha, axis=1, keepdims=True)
+    un_vacuity = class_num / S
+
+    return un_vacuity
+
 
 def relu_evidence(y):
     return F.relu(y)
