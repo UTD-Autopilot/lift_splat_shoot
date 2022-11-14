@@ -2,7 +2,15 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 
+def activate_uncertainty(output):
+    evidence = relu_evidence(output)
+    alpha = evidence + 1
+    prob = alpha / torch.sum(alpha, dim=1, keepdim=True)
+    return prob
+
+
 def dissonance(mean):
+    mean = mean.relu().cpu().numpy()
     evidence = mean + 1.0
     alpha = mean + 2.0
     S = np.sum(alpha, axis=1, keepdims=True)
@@ -23,18 +31,21 @@ def dissonance(mean):
 
     return dis_un
 
+
 def Bal(b_i, b_j):
     result = 1 - np.abs(b_i - b_j) / (b_i + b_j + 1e-7)
     return result
 
-def entropy_softmax(pred):
+
+def entropy(pred):
+    pred = pred.cpu().numpy()
     class_num = pred.shape[1]
     prob = softmax(pred) + 1e-10
     entropy = - prob * (np.log(prob) / np.log(class_num))
 
     total_un = np.sum(entropy, axis=1, keepdims=True)
     class_un = entropy
-    return total_un, class_un
+    return total_un
 
 
 def softmax(pred):
@@ -44,7 +55,7 @@ def softmax(pred):
 
 
 def vacuity(mean):
-    # Vacuity uncertainty
+    mean = mean.relu().cpu().numpy()
     class_num = mean.shape[1]
     alpha = mean + 2.0
     S = np.sum(alpha, axis=1, keepdims=True)
@@ -69,10 +80,10 @@ def kl_divergence(alpha, num_classes, device=None):
     ones = torch.ones([1, num_classes], dtype=torch.float32, device=device)
     sum_alpha = torch.sum(alpha, dim=1, keepdim=True)
     first_term = (
-        torch.lgamma(sum_alpha)
-        - torch.lgamma(alpha).sum(dim=1, keepdim=True)
-        + torch.lgamma(ones).sum(dim=1, keepdim=True)
-        - torch.lgamma(ones.sum(dim=1, keepdim=True))
+            torch.lgamma(sum_alpha)
+            - torch.lgamma(alpha).sum(dim=1, keepdim=True)
+            + torch.lgamma(ones).sum(dim=1, keepdim=True)
+            - torch.lgamma(ones.sum(dim=1, keepdim=True))
     )
     second_term = (
         (alpha - ones)
@@ -88,9 +99,9 @@ def loglikelihood_loss(y, alpha, device=None):
 
     alpha = alpha.to(device)
     S = torch.sum(alpha, dim=1, keepdim=True)
-    loglikelihood_err = torch.sum((y - (alpha / (S))) ** 2, dim=1, keepdim=True)
+    loglikelihood_err = torch.sum((y - (alpha / S)) ** 2, dim=1, keepdim=True)
     loglikelihood_var = torch.sum(
-        alpha * (S - alpha) / ((S * S * (S + 1))), dim=1, keepdim=True
+        alpha * (S - alpha) / (S * S * (S + 1)), dim=1, keepdim=True
     )
 
     loglikelihood = loglikelihood_err + loglikelihood_var
@@ -118,7 +129,7 @@ def edl_loss(func, y, alpha, epoch_num, num_classes, annealing_step, device=None
     alpha = alpha.to(device)
     S = torch.sum(alpha, dim=1, keepdim=True)
 
-    A = torch.sum(y * (func(S) - func(alpha)+1e-10), dim=1, keepdim=True)
+    A = torch.sum(y * (func(S) - func(alpha) + 1e-10), dim=1, keepdim=True)
 
     annealing_coef = torch.min(
         torch.tensor(1.0, dtype=torch.float32),
@@ -151,7 +162,7 @@ def edl_log_loss(output, target, epoch_num, num_classes, annealing_step, device=
 
 
 def edl_digamma_loss(
-    output, target, epoch_num, num_classes, annealing_step, device=None
+        output, target, epoch_num, num_classes, annealing_step, device=None
 ):
     evidence = relu_evidence(output)
     alpha = evidence + 1

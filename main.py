@@ -18,6 +18,7 @@ if __name__ == '__main__':
         'train_carla': src.train_carla.train,
         'eval_carla': src.eval_carla.eval,
         'grid_search': src.grid_search.search,
+        'multi_graph': src.multi_graph.graph,
 
         'eval_model_iou': src.explore.eval_model_iou,
         'viz_model_preds': src.explore.viz_model_preds,

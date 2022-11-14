@@ -51,7 +51,7 @@ class CarlaDataset(BaseDataset):
         self.ignore_label = ignore_label
         
         # self.color_list = [[0, 0, 0], [0, 0, 142], [128, 64, 128], (81,  0, 81)]
-        self.color_list = [[0, 0, 0], [0, 0, 142]]
+        self.color_list = [[0, 0, 0], [0, 0, 142], [157, 234, 50]]
 
         self.class_weights = None
 

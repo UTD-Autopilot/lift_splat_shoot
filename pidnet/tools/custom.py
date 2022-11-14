@@ -43,14 +43,16 @@ std = [0.229, 0.224, 0.225]
 
 color_map = [[0, 0, 0], [255, 255, 255]]
 
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Custom Input')
 
     parser.add_argument('--a', help='pidnet-s, pidnet-m or pidnet-l', default='pidnet-l', type=str)
     parser.add_argument('--c', help='cityscapes pretrained or not', type=bool, default=True)
     parser.add_argument('--p', help='dir for pretrained model',
-                        default='../output/carla/pidnet_large_carla/best.pt', type=str)
-    parser.add_argument('--r', help='root or dir for input images', default='/home/bny220000/projects/data/carla/', type=str)
+                        default='../../checkpoints/pidnet_best.pt', type=str)
+    parser.add_argument('--r', help='root or dir for input images', default='/home/bny220000/data/projects/data/carla/val_ood/',
+                        type=str)
     parser.add_argument('--t', help='the format of input images (.jpg, .png, ...)', default='.png', type=str)
 
     args = parser.parse_args()
@@ -93,7 +95,8 @@ if __name__ == '__main__':
         for subdir in dirs:
             all_dirs.append(os.path.join(rootdir, subdir))
 
-    target_dirs = ['back_camera', 'front_camera',  'right_back_camera', 'left_back_camera',  'right_front_camera', 'left_front_camera']
+    target_dirs = ['back_camera', 'front_camera', 'right_back_camera', 'left_back_camera', 'right_front_camera',
+                   'left_front_camera']
 
     model = models.pidnet.get_pred_model(args.a, 2)
 
@@ -103,8 +106,7 @@ if __name__ == '__main__':
             data_dirs.append(d)
 
     for sub_dir in tqdm(data_dirs):
-
-        data_path =  sub_dir + '/*' + args.t
+        data_path = sub_dir + '/*' + args.t
         images_list = glob.glob(data_path)
         sv_path = "/".join(list(data_path.split('/')[0:-1])) + '_pidnet/'
         print(sv_path)
@@ -117,7 +119,7 @@ if __name__ == '__main__':
             for img_path in images_list:
                 # print(img_path)
                 img_name = img_path.split("/")[-1]
-                #img = cv2.imread(os.path.join(args.r, img_name),
+                # img = cv2.imread(os.path.join(args.r, img_name),
                 #                cv2.IMREAD_COLOR)
                 img = cv2.imread(img_path, cv2.IMREAD_COLOR)
                 # print(os.path.join(sub_dir, img_name))
@@ -139,4 +141,3 @@ if __name__ == '__main__':
                 if not os.path.exists(sv_path):
                     os.mkdir(sv_path)
                 sv_img.save(sv_path + img_name)
-

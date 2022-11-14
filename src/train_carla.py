@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 import torch.nn as nn
-from torch.nn import CrossEntropyLoss, BCEWithLogitsLoss
+from torch.nn import CrossEntropyLoss
 
 from tqdm import tqdm
 from PIL import Image
@@ -41,13 +41,6 @@ def save_pred(pred, binimg, type):
     cv2.imwrite("binimgs_" + type + ".jpg", np.array(binimg.detach().cpu())[0, 0] * 255)
 
 
-def activate_uncertainty(output):
-    evidence = relu_evidence(output)
-    alpha = evidence + 1
-    prob = alpha / torch.sum(alpha, dim=1, keepdim=True)
-    return prob
-
-
 def get_camera_info(translation, rotation, sensor_options):
     roll = math.radians(rotation[2] - 90)
     pitch = -math.radians(rotation[1])
@@ -69,27 +62,23 @@ def mask(img, target):
 
 
 class CarlaDataset(torch.utils.data.Dataset):
-    def __init__(self, record_path, data_aug_conf, type="default", multi=False):
+    def __init__(self, record_path, data_aug_conf, type="default"):
         self.record_path = record_path
-        self.multi = multi
         self.type = type
         self.data_aug_conf = data_aug_conf
         self.vehicles = len(os.listdir(os.path.join(self.record_path, 'agents')))
         self.ticks = len(os.listdir(os.path.join(self.record_path, 'agents/0/back_camera')))
 
-        self.v = 0
-        self.e = 0
-
         with open(os.path.join(self.record_path, 'agents/0/sensors.json'), 'r') as f:
             self.sensors_info = json.load(f)
 
     def __len__(self):
-        # return self.vehicles*self.ticks
-        return 100
+        return self.vehicles*self.ticks
 
     def __getitem__(self, idx):
         agent_number = math.floor(idx / self.ticks)
         agent_path = os.path.join(self.record_path, f"agents/{agent_number}/")
+
         idx = idx % self.ticks
 
         imgs = []
@@ -103,16 +92,13 @@ class CarlaDataset(torch.utils.data.Dataset):
 
         binimgs = np.array(Image.open(os.path.join(agent_path + "birds_view_semantic_camera", str(idx) + '.png')))
 
-        if self.multi:
-            vehicles = mask(binimgs, (0, 0, 142))
-            empty = np.ones((200, 200))
+        vehicles = mask(binimgs, (0, 0, 142))
+        empty = np.ones((200, 200))
 
-            empty[vehicles == 1] = 0
+        empty[vehicles == 1] = 0
 
-            binimgs = np.stack((vehicles, empty))
-        else:
-            binimgs = mask(binimgs, (0, 0, 142))
-            binimgs = binimgs[None, :, :]
+        binimgs = np.stack((vehicles, empty))
+
 
         binimgs = torch.tensor(binimgs)
 
@@ -243,7 +229,10 @@ def get_val(model, val_loader, device, loss_fn, type, uncertainty, activation, n
             else:
                 total_loss += loss_fn(preds, binimgs).item() * preds.shape[0]
 
-            preds = activation(preds)
+            try:
+                preds = activation(preds)
+            except Exception as e:
+                preds = activation(preds, dim=1)
 
             # iou
             intersection, union = get_iou(preds, binimgs)
@@ -275,7 +264,6 @@ def train(
         weight=1,
         logdir='./runs',
         type='default',
-        multi=False,
         uncertainty=False,
 
         xbound=(-50.0, 50.0, 0.5),
@@ -309,27 +297,22 @@ def train(
         'Ncams': ncams,
     }
 
-    train_dataset = CarlaDataset(os.path.join(dataroot, "train/"), data_aug_conf, type=type, multi=multi)
-    val_dataset = CarlaDataset(os.path.join(dataroot, "val/"), data_aug_conf, type=type, multi=multi)
+    train_dataset = CarlaDataset(os.path.join(dataroot, "train/"), data_aug_conf, type=type)
+    val_dataset = CarlaDataset(os.path.join(dataroot, "val/"), data_aug_conf, type=type)
 
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=bsz, shuffle=True,
                                                num_workers=nworkers, drop_last=True)
     val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=bsz, shuffle=False, num_workers=nworkers)
 
     device = torch.device('cpu') if len(gpus) < 0 else torch.device(f'cuda:{gpus[0]}')
+    num_classes = 2
 
     if uncertainty:
-        model = compile_model(grid_conf, data_aug_conf, outC=2)
-        num_classes = 2
         activation = activate_uncertainty
-    elif multi:
-        model = compile_model(grid_conf, data_aug_conf, outC=2)
-        num_classes = 2
-        activation = torch.softmax
     else:
-        model = compile_model(grid_conf, data_aug_conf, outC=1)
-        num_classes = 1
-        activation = torch.sigmoid
+        activation = torch.softmax
+
+    model = compile_model(grid_conf, data_aug_conf, outC=num_classes)
 
     if type == "default":
         pass
@@ -348,14 +331,11 @@ def train(
 
     if uncertainty:
         loss_fn = edl_digamma_loss
-    elif multi:
-        loss_fn = CrossEntropyLoss(weight=torch.tensor([weight, 1.0]).cuda(device))
     else:
-        loss_fn = BCEWithLogitsLoss(pos_weight=torch.tensor([weight])).cuda(device)
-
+        loss_fn = CrossEntropyLoss(weight=torch.tensor([weight, 1.0]).cuda(device))
 
     writer = SummaryWriter(logdir=logdir)
-
+    print(device)
     print("--------------------------------------------------")
     print(f"Starting training on {type} model")
     print(f"Using GPUS: {gpus}")
@@ -372,8 +352,6 @@ def train(
     torch.autograd.set_detect_anomaly(True)
 
     for epoch in range(nepochs):
-        np.random.seed(0)
-
         for batchi, (imgs, img_segs, depths, rots, trans, intrins, post_rots, post_trans, binimgs) in enumerate(train_loader):
             t0 = time()
             opt.zero_grad()
@@ -397,10 +375,6 @@ def train(
 
             if uncertainty:
                 loss = loss_fn(preds.view(-1, num_classes), binimgs.view(-1, num_classes), epoch, num_classes, 10, device)
-                evidence = torch.relu(preds)
-                alpha = evidence + 1
-                u = num_classes / torch.sum(alpha, dim=1, keepdim=True)
-                u = torch.mean(u)
             else:
                 loss = loss_fn(preds, binimgs)
 
@@ -419,9 +393,6 @@ def train(
             if counter % 10 == 0:
                 print(counter, loss.item())
                 writer.add_scalar('train/loss', loss, counter)
-
-                if uncertainty:
-                    writer.add_scalar('train/uncertainty', u, counter)
 
             if counter % 50 == 0:
                 intersection, union = get_iou(preds, binimgs)
@@ -446,4 +417,4 @@ def train(
                 torch.save(model.state_dict(), mname)
                 model.train()
 
-            save_pred(preds, binimgs, type+str(multi)+str(uncertainty))
+            save_pred(preds, binimgs, type)

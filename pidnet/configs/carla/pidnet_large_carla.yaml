@@ -3,7 +3,7 @@ CUDNN:
   DETERMINISTIC: false
   ENABLED: true
 GPUS: (0,1)
-OUTPUT_DIR: 'output2'
+OUTPUT_DIR: 'output'
 LOG_DIR: 'log'
 WORKERS: 3
 PRINT_FREQ: 10
@@ -13,11 +13,11 @@ DATASET:
   ROOT: ../../data/carla/
   TEST_SET: 'val'
   TRAIN_SET: 'train'
-  NUM_CLASSES: 2
+  NUM_CLASSES: 3
 MODEL:
   NAME: pidnet_l
-  NUM_OUTPUTS: 2
-  PRETRAINED: "output/carla/pidnet_large_carla/checkpoint.pth.tar"
+  NUM_OUTPUTS: 3
+  PRETRAINED: "pretrained_models/imagenet/PIDNet_L_ImageNet.pth.tar"
 
 LOSS:
   USE_OHEM: true

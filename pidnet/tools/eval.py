@@ -62,7 +62,7 @@ def main():
     if config.TEST.MODEL_FILE:
         model_state_file = config.TEST.MODEL_FILE
     else:
-        model_state_file = os.path.join(final_output_dir, 'best.pt')      
+        model_state_file = os.path.join(final_output_dir, 'pidnet_best.pt')
    
     logger.info('=> loading model from {}'.format(model_state_file))
         

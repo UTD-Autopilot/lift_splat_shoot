@@ -54,7 +54,7 @@ class CamEncodeSeg(nn.Module):
 
         self.segmentor = models.pidnet.get_pred_model('pidnet-l', 4)
         self.segmentor = load_pretrained(self.segmentor,
-                                         './pidnet/output/carla/pidnet_large_carla/best.pt')
+                                         './pidnet/output/carla/pidnet_large_carla/pidnet_best.pt')
 
         self.segmentor.requires_grad_(False)
 

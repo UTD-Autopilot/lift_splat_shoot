@@ -1,16 +1,20 @@
-import cv2
 import numpy as np
 import torch.nn as nn
 
 from tqdm import tqdm
 from efficientnet_pytorch import EfficientNet
 
-import matplotlib.pyplot as plt
 from src.models import compile_model
 from src.train_carla import CarlaDataset, save_pred, get_iou, activate_uncertainty
-from src.losses import entropy_softmax, dissonance, vacuity
+import src.losses as l
 import os
 import torch
+
+import plotly.express as px
+from sklearn.metrics import precision_recall_curve, average_precision_score, PrecisionRecallDisplay, RocCurveDisplay
+from sklearn.metrics import roc_curve, roc_auc_score
+import plotly.graph_objects as go
+import matplotlib.pyplot as plt
 
 
 def eval (
@@ -27,18 +31,16 @@ def eval (
 
         ncams=5,
         type='default',
-        multi=False,
-        uncertainty=False,
+        uncertainty="entropy",
 
         xbound=(-50.0, 50.0, 0.5),
         ybound=(-50.0, 50.0, 0.5),
         zbound=(-10.0, 10.0, 20.0),
         dbound=(4.0, 45.0, 1.0),
 
-        bsz=1,
+        bsz=32,
         nworkers=10,
 ):
-
     grid_conf = {
         'xbound': xbound,
         'ybound': ybound,
@@ -58,23 +60,23 @@ def eval (
         'Ncams': ncams,
     }
 
-    val_dataset = CarlaDataset(os.path.join(dataroot, "val/"), data_aug_conf, type=type, multi=multi)
-    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=bsz, shuffle=True, num_workers=nworkers)
+    val_dataset = CarlaDataset(os.path.join(dataroot, "val/"), data_aug_conf, type=type)
+    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=bsz, shuffle=False, num_workers=nworkers)
+    ood_val_dataset = CarlaDataset(os.path.join(dataroot, "val_ood/"), data_aug_conf, type=type)
+    ood_val_loader = torch.utils.data.DataLoader(ood_val_dataset, batch_size=bsz, shuffle=False, num_workers=nworkers)
 
     device = torch.device('cpu') if len(gpus) < 0 else torch.device(f'cuda:{gpus[0]}')
 
-    if uncertainty:
+    if uncertainty is not None:
         model = compile_model(grid_conf, data_aug_conf, outC=2)
         num_classes = 2
         activation = activate_uncertainty
-    elif multi:
+        uncertainty_function = getattr(l, uncertainty)
+    else:
         model = compile_model(grid_conf, data_aug_conf, outC=2)
         num_classes = 2
         activation = torch.softmax
-    else:
-        model = compile_model(grid_conf, data_aug_conf, outC=1)
-        num_classes = 1
-        activation = torch.sigmoid
+        uncertainty_function = l.entropy
 
     if type == "default":
         pass
@@ -105,8 +107,10 @@ def eval (
     total_intersect = [0]*num_classes
     total_union = [0]*num_classes
 
-    uncert = []
-    iou = []
+    y_true = []
+    y_scores = []
+
+    name = type+("_"+uncertainty if uncertainty is not None else "_entropy")
 
     with torch.no_grad():
         for (imgs, img_segs, depths, rots, trans, intrins, post_rots, post_trans, binimgs) in tqdm(val_loader):
@@ -122,50 +126,72 @@ def eval (
                           post_trans.to(device))
             binimgs = binimgs.to(device)
 
+            uncert = uncertainty_function(preds)
+
             try:
                 preds = activation(preds)
             except Exception as e:
                 preds = activation(preds, dim=1)
 
-            # iou
             intersect, union = get_iou(preds, binimgs)
 
             for i in range(num_classes):
                 total_intersect[i] += intersect[i]
                 total_union[i] += union[i]
 
-            if uncertainty:
-                try:
-                    map = dissonance(np.array(preds.cpu()))
-                    map = map / np.max(map)
-                    cv2.imwrite("uncert_map_u.jpg", map[0][0] * 255)
-                    uncert.append(np.mean(dissonance(np.array(preds.cpu()))))
-                    iou.append(intersect[0]/union[0])
-                except Exception as e:
-                    iou.append(0)
-            else:
-                try:
-                    map = entropy_softmax(np.array(preds.cpu()))[0]
-                    map = map / np.max(map)
-                    cv2.imwrite("uncert_map.jpg", map[0][0] * 255)
-                    # print(map.shape)
-                    uncert.append(np.mean(entropy_softmax(np.array(preds.cpu()))[0]))
-                    iou.append(intersect[0]/union[0])
-                except Exception as e:
-                    iou.append(0)
+            save_pred(preds, binimgs, type)
+            plt.imsave("uncert_map"+name+".jpg", plt.cm.jet(uncert[0][0]))
 
-            save_pred(preds, binimgs, type+str(multi)+str(uncertainty))
+            preds = preds[:, 0, :, :].ravel()
+            binimgs = binimgs[:, 0, :, :].ravel()
+            uncert = torch.tensor(uncert).ravel()
 
-    # iou = [0]*num_classes
-    #
-    # for i in range(num_classes):
-    #     iou[i] = total_intersect[i]/total_union[i]
+            vehicle = np.logical_or(preds.cpu() > 0.5, binimgs.cpu() == 1).bool()
 
-    # print('iou: ' + str(iou))
+            preds = preds[vehicle]
+            binimgs = binimgs[vehicle]
+            uncert = uncert[vehicle]
 
-    plt.scatter(uncert, iou)
-    plt.xlabel("Uncertainty")
-    plt.ylabel("IOU")
-    plt.savefig("u_plot.jpg")
+            pred = (preds > 0.5)
+            tgt = binimgs.bool()
+            intersect = (pred == tgt).type(torch.int64)
 
+            y_true += intersect.tolist()
+            # y_true += binimgs.cpu().tolist()
+            uncert = -uncert
+            y_scores += uncert.tolist()
+
+    iou = [0]*num_classes
+
+    for i in range(num_classes):
+        iou[i] = total_intersect[i]/total_union[i]
+
+    print('iou: ' + str(iou))
+
+    print(len(y_true))
+    print(len(y_scores))
+
+    precision, recall, thresholds = precision_recall_curve(y_true, y_scores)
+    pr = average_precision_score(y_true, y_scores)
+    fpr, tpr, _ = roc_curve(y_true, y_scores)
+    auc_score = roc_auc_score(y_true, y_scores)
+
+    roc_display = RocCurveDisplay(fpr=fpr, tpr=tpr)
+    pr_display = PrecisionRecallDisplay(precision=precision, recall=recall)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
+    plt.ylim([0, 1.05])
+    plt.ylim([0, 1.05])
+
+    roc_display.plot(ax=ax1, label=type)
+    pr_display.plot(ax=ax2, label=type)
+
+    handles, labels = ax1.get_legend_handles_labels()
+    ax1.legend(handles, labels)
+    handles, labels = ax2.get_legend_handles_labels()
+    ax2.legend(handles, labels)
+
+    plt.savefig(f"{name}_combined.png")
+    print(f"pr: {pr} roc: {auc_score}")
+
+    return roc_display, pr_display, auc_score, pr
 

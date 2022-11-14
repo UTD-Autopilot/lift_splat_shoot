@@ -198,7 +198,7 @@ def main():
         if mean_IoU > best_mIoU:
             best_mIoU = mean_IoU
             torch.save(model.module.state_dict(),
-                    os.path.join(final_output_dir, 'best.pt'))
+                    os.path.join(final_output_dir, 'pidnet_best.pt'))
         msg = 'Loss: {:.3f}, MeanIU: {: 4.4f}, Best_mIoU: {: 4.4f}'.format(
                     valid_loss, mean_IoU, best_mIoU)
         logging.info(msg)
